@@ -1,4 +1,6 @@
-.PHONY: help up down build shell logs test generate generate-large clean
+.PHONY: help up down build shell logs run test generate generate-large clean
+
+REFERENCE_DATE ?= 2025-03-16
 .DEFAULT_GOAL := help
 
 COMPOSE := docker compose
@@ -9,6 +11,9 @@ help: ## Show available targets
 
 up: ## Build and start the container in the background
 	$(COMPOSE) up -d --build
+
+run: ## Run the pipeline for REFERENCE_DATE (default 2025-03-16)
+	$(PIPELINE) python pipeline/pipeline.py --reference-date $(REFERENCE_DATE)
 
 down: ## Stop and remove the container
 	$(COMPOSE) down

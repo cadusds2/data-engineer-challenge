@@ -4,10 +4,17 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - DATA_PATH=/app/docs/sample-data
+      - WAREHOUSE_PATH=/app/warehouse/settlement.duckdb
       - LOG_LEVEL=INFO
       - ENVIRONMENT=local
     volumes:
       - ./docs/sample-data:/app/docs/sample-data:ro
       - ./scripts:/app/scripts
       - ./tests:/app/tests
+      - ./pipeline:/app/pipeline
+      - ./dbt_project:/app/dbt_project
+      - warehouse:/app/warehouse
     command: tail -f /dev/null
+
+volumes:
+  warehouse:
