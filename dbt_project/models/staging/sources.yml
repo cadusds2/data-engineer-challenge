@@ -1,0 +1,24 @@
+version: 2
+
+sources:
+  - name: settlement_db
+    description: >
+      CDC extracts (DMS-style, columns Op/_timestamp) from the operational
+      PostgreSQL, delivered as parquet files on the local filesystem.
+    meta:
+      external_location: "{{ env_var('DATA_PATH', '/app/docs/sample-data') }}/{name}.parquet"
+    tables:
+      - name: transactions
+        description: Two CDC batches with schema drift (batch 2 adds payment_method).
+        meta:
+          external_location: "read_parquet('{{ env_var('DATA_PATH', '/app/docs/sample-data') }}/transactions_batch_*.parquet', union_by_name=true)"
+      - name: reconciliation_runs
+      - name: reconciliation_results
+      - name: enterprise_company
+
+  - name: paysettler
+    description: Daily settlement file from the external processor.
+    tables:
+      - name: settlement_file
+        meta:
+          external_location: "{{ env_var('DATA_PATH', '/app/docs/sample-data') }}/settlement_paysettler.csv"

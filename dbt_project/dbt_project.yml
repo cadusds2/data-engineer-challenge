@@ -1,0 +1,22 @@
+name: settlement_analytics
+version: "1.0.0"
+profile: settlement_analytics
+
+model-paths: ["models"]
+test-paths: ["tests"]
+target-path: target
+
+vars:
+  # reference date being processed; overridden by the orchestrator via --vars
+  reference_date: "2025-03-16"
+  reconciliation_window_days: 7
+  amount_tolerance: 0.01
+
+models:
+  settlement_analytics:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: table
+    marts:
+      +materialized: table
