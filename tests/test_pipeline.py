@@ -31,6 +31,7 @@ def run_pipeline(data_path: Path, warehouse: Path) -> subprocess.CompletedProces
         capture_output=True,
         text=True,
         cwd=REPO_ROOT,
+        check=False,
     )
 
 

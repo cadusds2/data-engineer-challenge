@@ -49,7 +49,7 @@ def run_dbt(reference_date: str) -> None:
     ]
     log.info("running: %s", " ".join(cmd))
     started = time.monotonic()
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd, check=False)
     elapsed = time.monotonic() - started
     if result.returncode != 0:
         log.error("dbt build failed (exit=%d, %.1fs)", result.returncode, elapsed)
