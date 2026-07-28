@@ -1,279 +1,178 @@
-# Case Técnico — Engenheiro(a) de Dados Sênior / Especialista
+# Settlement Reconciliation — camada analítica
 
-## Contexto de Negócio
+Solução para o [case de Engenharia de Dados](docs/challenge-statement.md): um mini data
+warehouse local (DuckDB + dbt) que **recalcula a reconciliação de liquidações a partir
+das fontes cruas** e publica marts dedicados a três personas — Operações, CFO e
+Compliance.
 
-Você está entrando no time de dados de uma fintech que processa liquidações de pagamentos para merchants. A empresa opera o **Settlement Reconciliation Service** — um serviço em produção que:
+## Como rodar
 
-1. Recebe diariamente um **arquivo CSV** do processador de pagamentos externo (**PaySettler**) com as transações liquidadas nas últimas 24h
-2. Compara essas transações com os **registros internos** do sistema
-3. Categoriza cada transação e persiste os resultados em um **PostgreSQL** (`settlement_db`)
-
-O serviço funciona bem, mas **todos os dados vivem apenas no banco transacional**. O time de operações precisa saber se a taxa de discrepância está subindo. O CFO quer o volume transacionado por dia. Compliance precisa de histórico de auditoria. **Ninguém tem acesso estruturado a nada disso hoje.**
-
-### Sua Missão
-
-Construir uma solução que transforme esses dados em **produtos de dados** consumíveis pelo negócio. Cabe a você decidir como.
-
----
-
-## Domínio: Reconciliação de Liquidações
-
-> O glossário completo está em [`docs/domain-glossary.md`](docs/domain-glossary.md). Leia antes de começar.
-
-### Tabelas Fonte (`settlement_db`)
-
-**`transactions`** — Transações internas do sistema
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `id` | bigint | PK |
-| `transaction_id` | uuid | Identificador único da transação |
-| `merchant_id` | varchar | Identificador do merchant |
-| `amount` | decimal | Valor da transação (BRL) |
-| `currency` | varchar | Moeda (ISO 4217) |
-| `status` | varchar | `COMPLETED`, `PENDING`, `FAILED` |
-| `description` | varchar | Descrição da transação |
-| `created_at` | timestamp | Data de criação |
-| `updated_at` | timestamp | Última atualização |
-
-**`reconciliation_runs`** — Execuções de reconciliação
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `id` | bigint | PK |
-| `reference_date` | date | Data de referência do arquivo (dia de negócio) |
-| `file_name` | varchar | Nome do arquivo processado |
-| `status` | varchar | `IN_PROGRESS`, `COMPLETED`, `FAILED` |
-| `total_transactions` | integer | Total de transações no arquivo |
-| `started_at` | timestamp | Início do processamento |
-| `completed_at` | timestamp | Fim do processamento |
-| `created_at` | timestamp | Data de criação do registro |
-
-**`reconciliation_results`** — Resultados da reconciliação
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `id` | bigint | PK |
-| `run_id` | bigint | FK → `reconciliation_runs.id` |
-| `transaction_id` | uuid | Identificador da transação |
-| `merchant_id` | varchar | Identificador do merchant |
-| `category` | varchar | `MATCHED`, `MISMATCHED`, `UNRECONCILED_PROCESSOR`, `UNRECONCILED_INTERNAL` |
-| `internal_amount` | decimal | Valor no sistema interno (null se unreconciled_processor) |
-| `processor_amount` | decimal | Valor no PaySettler (null se unreconciled_internal) |
-| `difference` | decimal | Diferença absoluta entre valores |
-| `created_at` | timestamp | Data de criação |
-
-**`enterprise_company`** — Dados cadastrais dos merchants
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `id` | bigint | PK |
-| `merchant_id` | varchar | Código do merchant |
-| `legal_name` | varchar | Razão social |
-| `trade_name` | varchar | Nome fantasia |
-| `document` | varchar | CNPJ |
-| `primary_cnae` | varchar | CNAE principal |
-| `created_at` | timestamp | Data de criação |
-| `updated_at` | timestamp | Última atualização |
-
-### Arquivo CSV do PaySettler
-
-O processador externo envia diariamente um CSV com as transações liquidadas.
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `transaction_id` | uuid | Identificador da transação |
-| `merchant_id` | varchar | Identificador do merchant |
-| `amount` | decimal | Valor liquidado |
-| `currency` | varchar | Moeda (ISO 4217) |
-| `settled_at` | datetime (ISO 8601, UTC) | Data/hora da liquidação |
-| `processor_reference` | varchar | Referência interna do processador |
-| `status` | varchar | `SETTLED` ou `REVERSED` |
-
----
-
-## Stack
-
-- **Linguagem:** Python 3.12+
-- **Processamento:** DuckDB
-- **Conteinerização:** Docker + Docker Compose
-- **Armazenamento:** Filesystem local
-
-A solução deve **rodar localmente** com `docker-compose up`.
-
----
-
-## Dados de Exemplo
-
-Na pasta `docs/sample-data/` você encontrará:
-
-- `transactions_batch_1.parquet` — Transações internas (lote 1)
-- `transactions_batch_2.parquet` — Transações internas (lote 2)
-- `reconciliation_runs.parquet` — Execuções de reconciliação
-- `reconciliation_results.parquet` — Resultados categorizados
-- `settlement_paysettler.csv` — Arquivo CSV do PaySettler
-- `enterprise_company.parquet` — Dados cadastrais de merchants
-
----
-
-## Como Começar
-
-1. **Faça um fork** deste repositório para sua conta pessoal do GitHub
-2. Clone o seu fork e trabalhe nele normalmente
-3. Suba o ambiente:
+Pré-requisitos: Docker + Docker Compose.
 
 ```bash
-docker compose up -d --build
-# ou: make up
+docker compose up -d --build   # constrói e sobe o container do pipeline
+make run                       # roda o pipeline (REFERENCE_DATE=2025-03-16 por padrão)
+make run REFERENCE_DATE=2025-03-13
+make test                      # pytest dentro do container (12 testes)
 ```
 
-Um `Makefile` no repositório expõe atalhos para as operações mais comuns (`make help` lista os alvos disponíveis). O uso é opcional.
-
----
-
-## Requisitos
-
-### Parte 1 — Modelagem e Analytics
-
-Usando os dados disponíveis, **modele e implemente tabelas analíticas** que atendam os seguintes consumidores:
-
-- **Operações:** precisa acompanhar a saúde das reconciliações no dia a dia
-- **CFO:** precisa de visão consolidada do volume financeiro
-- **Compliance:** precisa de rastreabilidade e histórico para auditorias
-
-**A forma e o conteúdo das tabelas são decisão sua.** Traduza as dores acima em métricas e tabelas analíticas (fatos e dimensões) que você defenderia em produção. Documente, para cada consumidor:
-
-- **Quais perguntas** seu modelo consegue responder (e quais deliberadamente não)
-- **Por que** essas e não outras (priorização, tradeoffs de escopo vs tempo)
-
-Entregue também exemplos de queries rodando contra suas tabelas que respondem as perguntas que você propôs. Queremos ver seu raciocínio de produto, não só SQL.
-
----
-
-### Parte 2 — Pipeline de Dados
-
-Implemente o pipeline que processa as fontes de dados disponíveis e prepara o insumo para as tabelas analíticas da Parte 1.
-
-O volume em `docs/sample-data/` é pequeno de propósito — assuma **~5M transações/mês em produção** e projete para crescer. Se quiser validar na prática como seu pipeline se comporta em escala, use o gerador descrito na seção _"Dados de Exemplo e Geração de Volume"_.
-
-Critérios de qualidade (como você os atende é decisão sua — documente suas escolhas):
-
-- **Correção:** a saída do pipeline bate com o contrato de dados que você propôs
-- **Idempotência:** executar o pipeline para a mesma data de referência duas vezes não pode duplicar registros nem corromper as tabelas. Considere como isso se manifesta na sua CLI, nas tabelas finais e em falhas no meio da execução
-- **Observabilidade:** em produção, quando algo quebrar, que sinais você precisaria para diagnosticar rapidamente?
-- **Qualidade de dados:** quais checks você adicionaria para proteger os consumidores de downstream de dados incorretos? O que faria o pipeline parar versus apenas alertar?
-- **Testabilidade:** como você valida automaticamente que uma mudança no código não quebra o comportamento?
-
-Stack obrigatória: **DuckDB** para processamento, **Python 3.12+**, **Docker Compose** para subir o ambiente.
-
----
-
-### Parte 3 — Arquitetura
-
-#### 3.1 Desenho de Arquitetura
-
-**Explique e/ou desenhe** como você levaria esses dados do banco transacional até o consumo pelo negócio em produção.
-
-#### 3.2 Troubleshooting
-
-Segunda-feira de manhã. Ops abre um chamado: os dashboards de reconciliação estão sem dados desde sexta-feira à noite. Você é o primeiro a chegar.
-
-Como você investigaria? Que artefatos do próprio pipeline você consultaria? Até onde iria antes de acionar mais alguém?
-
-#### 3.3 Escalabilidade
-
-Hoje o volume é pequeno, mas o negócio projeta chegar em **~5M transações/dia** em 18 meses (≈1,8B/ano em `reconciliation_results`). Como você prepararia a plataforma para esse crescimento? Onde o desenho atual quebra primeiro?
-
----
-
-## Dados de Exemplo e Geração de Volume
-
-O repositório oferece duas fontes de dado. **A escolha de volume e de quais fontes usar é sua.**
-
-### 1. Fixture pequeno — `docs/sample-data/`
-
-Cerca de 1.000 transações internas e ~500 liquidações. Pensado para exploração, desenvolvimento local e como insumo default dos exemplos de queries da Parte 1.
-
-### 2. Gerador sintético — `scripts/generate_sample_data.py`
-
-Produz o mesmo schema do fixture (CDC `Op`/`_timestamp`, schema drift entre batches, padrões realistas de dados sujos) em volume arbitrário. Útil para validar seu pipeline em escala — por exemplo, ao redor dos ~5M transações/mês assumidos na Parte 2.
-
-**Você define o volume e as características.** O script é parametrizável:
+Consultar os resultados:
 
 ```bash
-# dataset médio para smoke em escala (1M transações, 90 dias)
-python scripts/generate_sample_data.py --rows 1000000 --days 90 --out /tmp/medium
-
-# dataset alinhado à projeção de ~5M transações/mês
-python scripts/generate_sample_data.py --rows 5000000 --days 30 --out /tmp/month
+docker compose exec pipeline python -c "
+import duckdb
+c = duckdb.connect('/app/warehouse/settlement.duckdb', read_only=True)
+print(c.sql('select * from mart_operations limit 10'))"
 ```
 
-Flags principais:
+Queries de exemplo por persona: [docs/example-queries.sql](docs/example-queries.sql).
 
-| Flag | Descrição | Default |
-|------|-----------|---------|
-| `--rows N` | Total de transações internas a gerar | `1000000` |
-| `--days N` | Janela temporal em dias | `90` |
-| `--merchants N` | Número de merchants | `500` |
-| `--seed N` | Semente determinística | `42` |
-| `--out PATH` | Diretório de saída | `docs/sample-data` |
+BI opcional (Evidence — não é dependência do pipeline):
 
-Rode `python scripts/generate_sample_data.py --help` para a lista completa. Dentro do container, `make generate` (10k linhas) e `make generate-large` (1M linhas) são atalhos prontos.
+```bash
+docker compose --profile bi up -d   # http://localhost:3000 (primeira subida baixa dependências)
+```
 
----
+Teste de escala (~1M linhas):
 
-## Uso de IA
+```bash
+make generate-large
+docker compose exec -e DATA_PATH=/tmp/generated-large pipeline \
+  python pipeline/pipeline.py --reference-date 2025-03-16
+```
 
-Fique à vontade para usar ferramentas de IA durante o desafio. Se usar, documente no item _"Ferramentas de IA utilizadas"_ da entrega quais ferramentas e para quê. Se mantiver prompts, configs (`CLAUDE.md`, `.cursorrules`, etc.) ou transcrições no repositório, melhor — ajuda a entender seu processo.
+## Decisão central: recalcular a reconciliação
 
----
+O banco fonte já traz `reconciliation_results` pronto. Havia dois caminhos:
 
-## Entrega
+1. **Espelhar** os resultados do serviço (simples, mas nunca toca o CSV além de contar linhas);
+2. **Recalcular** o match a partir das fontes cruas, aplicando as regras do glossário
+   (janela de 7 dias, tolerância de R$ 0,01, match por `transaction_id`).
 
-1. Ao finalizar, **abra um Pull Request do seu fork para o repositório original** (branch `main`)
-2. Preencha as seções abaixo no README do seu PR:
+Escolhi **recalcular** (`int_reconciliation`), pelos motivos:
 
-### Como rodar
+- Os dados plantam anomalias que só aparecem refazendo o match: estorno REVERSED órfão,
+  liquidações fora da janela, `merchant_id` nulo — todas detectadas e expostas nos marts.
+- Uma camada analítica que *verifica* o sistema operacional tem valor de auditoria: se o
+  serviço tiver um bug, o espelho propaga; o recálculo detecta.
+- Os resultados históricos do serviço **não são descartados**: viram cross-check
+  (`assert_engine_matches_service`, severidade `warn`) e aparecem lado a lado no
+  `mart_compliance` (`engine_category` × `service_category`).
 
-_Descreva os passos para rodar a aplicação._
+Custo assumido: duas implementações da regra de match (a do serviço e a nossa). Mitigado
+pelo cross-check contínuo e pela regra estar centralizada em um único modelo SQL coberto
+por unit tests.
 
-### Premissas e decisões
+## Modelagem (Parte 1)
 
-_Documente as ambiguidades que encontrou e as decisões que tomou._
+```
+fontes (parquet CDC + CSV)
+  └─ staging (5 views): dedup CDC, tipos, normalização de valores
+       └─ int_reconciliation (motor) + int_reversals
+            └─ dim_merchant + marts por persona
+```
 
-### Visão geral da arquitetura
+| Tabela | Grão | Persona | Perguntas que responde |
+|---|---|---|---|
+| `mart_operations` | dia × merchant | Operações | Taxa de match de ontem? Quais merchants concentram mismatch? Quantas liquidações fora da janela? |
+| `mart_cfo` | dia × merchant | CFO | Volume liquidado/estornado/líquido por período, merchant e CNAE? Quanto está em risco (mismatch) ou pendente? |
+| `mart_compliance` | transação | Compliance | O que aconteceu com a transação X? Onde nosso recálculo diverge do registro do serviço? Quais anomalias estão abertas? |
 
-_Descreva a estrutura do projeto. Diagrama é bem-vindo._
+**O que o modelo NÃO responde** (limites declarados):
 
-### Extensibilidade
+- Histórico de cadastro do merchant (dimensão é SCD tipo 1 — mudança de razão social
+  sobrescreve; ver [Limites do desenho](#limites-do-desenho-casos-concretos-não-suportados)).
+- Análise intradiária (grão mínimo é o dia).
+- Reconciliação entre múltiplas moedas (divergência de moeda é flagada como anomalia,
+  não convertida).
 
-_Se amanhã precisarmos plugar uma **segunda fonte de liquidação** (ex.: outro processador além do PaySettler, com schema parecido mas não idêntico), **quantos arquivos/linhas mudam** no seu projeto? Descreva o caminho concreto — quais módulos tocam, qual config precisa ser estendida, quais testes rodam de novo._
+### Decisões de modelagem
 
-### Limites do desenho
+- **Sem `dim_date`**: funções de data do DuckDB cobrem as necessidades atuais; a
+  dimensão entraria se houvesse regra de dias úteis/feriados bancários (relevante em
+  liquidação D+1).
+- **Membro desconhecido** em `dim_merchant`: transações com `merchant_id` nulo
+  (plantadas pelo gerador) agregam no bucket `UNKNOWN` em vez de sumirem silenciosamente.
+- **Runs reprocessadas**: 9 datas do fixture têm mais de uma run; `is_latest_run` marca
+  a autoritativa (última COMPLETED). Compliance enxerga todas.
 
-_O que a sua arquitetura **deliberadamente não suporta hoje** e que você sabe que uma versão de produção precisaria? Dê **2 a 3 exemplos concretos** (evite "melhorar logs" ou "mais testes" — seja específico)._
+## Pipeline (Parte 2)
 
-### O que faria diferente em produção
+`pipeline/pipeline.py` (orquestração: valida entradas, resolve a data, logs
+estruturados, exit codes) → `dbt build` (transformações + testes).
 
-_O que simplificou? O que a versão de produção precisaria?_
+| Critério | Como foi atendido |
+|---|---|
+| Correção | Motor com unit tests dbt: um caso controlado por regra de negócio (borda da tolerância, janela, moeda, status, dedup) |
+| Idempotência | Marts incrementais `delete+insert` por `reference_date`; teste e2e roda o pipeline 2× e compara contagens |
+| Observabilidade | Logs estruturados por etapa (arquivos validados, duração, resultado); exit codes distintos (2 = entrada faltando, 1 = falha de transformação) |
+| Qualidade | 32 testes dbt: contratos de chave/nulos/valores por camada, proteção de grão, cross-check motor × serviço (warn) |
+| Testabilidade | `make test`: 12 testes pytest (e2e, idempotência, entradas malformadas) + suíte original do gerador |
 
-### Ferramentas de IA utilizadas
+### Anomalias reais encontradas nos dados
 
-_Quais ferramentas de IA usou e para quê? Encorajamos o uso de IA — queremos entender como você a utiliza como ferramenta de trabalho._
+1. **CDC**: 1.060 eventos → 995 transações vivas (updates/deletes colapsados por
+   `_timestamp`).
+2. **Schema drift**: `transactions_batch_2` adiciona `payment_method`; absorvido com
+   `union_by_name`.
+3. **CSV com moeda formatada**: `R$ 18.319,17` misturado com `2616.01`; leitura forçada
+   como texto (`all_varchar`) para a inferência de tipos não variar com o conteúdo do
+   arquivo — bug real encontrado no teste de escala.
+4. **Duplicata na fonte**: o serviço gravou a mesma transação 2× na run 5 (ids 388/413);
+   detectado pelo teste de proteção de grão, deduplicado no cross-check.
+5. **Estorno órfão** e **liquidações fora da janela**: expostos como flags/contagens nos
+   marts.
+6. **CSV do fixture é sintético**: não corresponde 1:1 ao histórico (~0 MATCHED no
+   recálculo da amostra é esperado). Por isso a correção é provada com fixtures
+   controlados (unit tests), não com a amostra.
 
----
+## Extensibilidade: segunda fonte de liquidação
 
-## Prazo
+O acoplamento ao PaySettler está isolado em dois pontos: a source `paysettler` e o
+`stg_settlements` (normalização). Para um segundo processador:
 
-Você tem **3 a 4 dias** para completar o desafio.
+1. Nova source + novo modelo de staging traduzindo para o contrato canônico
+   (`transaction_id`, `merchant_id`, `amount`, `currency`, `settled_at`, `status`,
+   `processor`);
+2. Union dos stagings num `stg_settlements_unified` com coluna `processor`;
+3. Motor e marts inalterados (o match não sabe de qual processador veio a linha); marts
+   ganham `processor` como dimensão de quebra.
 
-Valorizamos uma solução **completa, limpa e bem documentada** mais do que rica em features. Se o tempo estiver curto, reduza escopo, não qualidade.
+Quando a ingestão deixar de ser "arquivos locais" (API paginada, SFTP, estado
+incremental), um framework como **dlt** passa a se justificar; hoje seria camada extra
+sobre ~20 linhas de SQL.
 
----
+## Limites do desenho (casos concretos não suportados)
 
-## Observações
+1. **Merchant muda de razão social no meio do mês**: relatório mensal do CFO mostra toda
+   a série com o nome novo (SCD1). Suporte exigiria SCD2 com vigências.
+2. **Arquivo do processador re-enviado com correções para data antiga**: o
+   reprocessamento sobrescreve o dia (idempotência), mas não há versionamento do
+   *arquivo* — não sabemos responder "o que o arquivo do dia 10 dizia antes da
+   correção?". Exigiria camada raw imutável com versionamento.
+3. **Transação liquidada em parcelas** (settlement parcial): o match é 1:1 por
+   `transaction_id`; N liquidações parciais somariam como duplicata/mismatch. Exigiria
+   match por agregação.
 
-- **Não inclua código malicioso no projeto.** Caso identificado, o projeto será desconsiderado.
-- Após a entrega, faremos uma **conversa técnica de ~45 minutos** sobre sua implementação e decisões.
+## Diferenças vs. produção
 
-*Boa sorte! Qualquer dúvida sobre o enunciado, entre em contato antes de assumir premissas.*
+O que foi simplificado e o que mudaria — detalhado em
+[docs/architecture.md](docs/architecture.md):
+
+- Warehouse: DuckDB local → BigQuery/Snowflake/Redshift (DuckDB não suporta escritores
+  concorrentes).
+- Orquestração: execução manual → disparo por chegada de arquivo (EventBridge + Step
+  Functions na AWS; Eventarc + Cloud Run Jobs no GCP).
+- Ingestão: arquivos locais → CDC gerenciado (DMS/Datastream) + landing em objeto
+  (S3/GCS) com camada raw imutável, particionada por data, e evolução para ingestão
+  incremental com watermark.
+- Alertas: logs → métricas + alerting (CloudWatch/Cloud Monitoring), incluindo o
+  cross-check como alarme.
+- Segredos, IAM, retenção e LGPD (mascaramento de CNPJ no mart de BI).
+
+## Ferramentas de IA
+
+Este case foi desenvolvido em par com **Claude Code** (Anthropic): exploração dos dados,
+geração de código SQL/Python sob minha direção, testes e redação da documentação. Todas
+as decisões de arquitetura e modelagem foram tomadas por mim ao longo de sessões
+interativas; o histórico de commits reflete a evolução real do trabalho.

@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check .
+
+  pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image and start container
+        run: docker compose up -d --build
+      - name: Run full pipeline on the fixture (models + dbt tests)
+        run: make run
+      - name: Re-run same date (idempotency smoke check)
+        run: make run
+      - name: Run test suite inside the container
+        run: make test
+      - name: Show pipeline logs on failure
+        if: failure()
+        run: docker compose logs pipeline

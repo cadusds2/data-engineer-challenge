@@ -16,5 +16,16 @@ services:
       - warehouse:/app/warehouse
     command: tail -f /dev/null
 
+  bi:
+    image: node:20-slim
+    profiles: ["bi"]
+    working_dir: /app
+    volumes:
+      - ./evidence:/app
+      - warehouse:/app/sources/settlement/data:ro
+    ports:
+      - "3000:3000"
+    command: sh -c "until npm install --legacy-peer-deps --fetch-retries 5 --fetch-retry-maxtimeout 120000; do echo retrying npm install; sleep 5; done && npm run sources && npm run dev -- --host 0.0.0.0 --port 3000"
+
 volumes:
   warehouse:

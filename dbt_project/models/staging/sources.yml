@@ -20,5 +20,9 @@ sources:
     description: Daily settlement file from the external processor.
     tables:
       - name: settlement_file
+        description: >
+          Read with all_varchar so schema inference cannot flip column types
+          depending on file contents (amounts arrive both as plain numbers
+          and as 'R$ 1.234,56' strings); typing happens in staging.
         meta:
-          external_location: "{{ env_var('DATA_PATH', '/app/docs/sample-data') }}/settlement_paysettler.csv"
+          external_location: "read_csv('{{ env_var('DATA_PATH', '/app/docs/sample-data') }}/settlement_paysettler.csv', header=true, all_varchar=true)"

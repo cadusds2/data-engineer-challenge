@@ -12,7 +12,7 @@
 with settled as (
     select
         reference_date,
-        merchant_id,
+        coalesce(merchant_id, 'UNKNOWN') as merchant_id,
         count(*) filter (status = 'SETTLED') as settled_count,
         coalesce(sum(amount) filter (status = 'SETTLED'), 0) as settled_amount,
         count(*) filter (status = 'REVERSED') as reversed_count,
@@ -25,7 +25,7 @@ with settled as (
 reconciled as (
     select
         reference_date,
-        merchant_id,
+        coalesce(merchant_id, 'UNKNOWN') as merchant_id,
         coalesce(sum(processor_amount) filter (category = 'MATCHED'), 0) as matched_amount,
         coalesce(sum(abs(difference)) filter (category = 'MISMATCHED'), 0) as at_risk_amount,
         coalesce(sum(processor_amount) filter (category = 'UNRECONCILED_PROCESSOR'), 0)

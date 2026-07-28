@@ -218,3 +218,7 @@ __marimo__/
 # local tooling / internal
 .claude/
 docs/evaluation/
+
+# Evidence build artifacts
+evidence/node_modules/
+evidence/.evidence/

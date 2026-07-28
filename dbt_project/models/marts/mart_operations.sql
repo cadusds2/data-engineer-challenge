@@ -9,7 +9,7 @@
 with recon as (
     select
         reference_date,
-        merchant_id,
+        coalesce(merchant_id, 'UNKNOWN') as merchant_id,
         count(*) as total_transactions,
         count(*) filter (category = 'MATCHED') as matched_count,
         count(*) filter (category = 'MISMATCHED') as mismatched_count,
@@ -26,7 +26,7 @@ with recon as (
 reversals as (
     select
         reference_date,
-        merchant_id,
+        coalesce(merchant_id, 'UNKNOWN') as merchant_id,
         count(*) as reversal_count,
         count(*) filter (reversal_status = 'ORPHAN') as orphan_reversal_count,
         coalesce(sum(reversed_amount), 0) as reversed_amount

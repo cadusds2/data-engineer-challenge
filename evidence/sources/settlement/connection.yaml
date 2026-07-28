@@ -1,0 +1,4 @@
+name: settlement
+type: duckdb
+options:
+  filename: data/settlement.duckdb
