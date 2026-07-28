@@ -1,0 +1,66 @@
+version: 2
+
+models:
+  - name: int_reconciliation
+    description: Recomputed reconciliation for the reference date.
+    columns:
+      - name: transaction_id
+        tests: [unique, not_null]
+      - name: category
+        tests:
+          - accepted_values:
+              values: [MATCHED, MISMATCHED, UNRECONCILED_PROCESSOR, UNRECONCILED_INTERNAL]
+  - name: int_reversals
+    columns:
+      - name: reversal_status
+        tests:
+          - accepted_values:
+              values: [LINKED, ORPHAN]
+
+unit_tests:
+  - name: engine_categorization_rules
+    description: >
+      One controlled case per business rule: exact match, tolerance edge,
+      mismatch, unreconciled on both sides, out-of-window flag, currency
+      divergence, settled-but-not-completed anomaly, pending exclusion,
+      processor file dedup.
+    model: int_reconciliation
+    overrides:
+      vars:
+        reference_date: "2025-03-16"
+        reconciliation_window_days: 7
+        amount_tolerance: 0.01
+    given:
+      - input: ref('stg_transactions')
+        rows:
+          - {transaction_id: t_exact, merchant_id: m1, amount: 100.00, currency: BRL, status: COMPLETED, created_at: 2025-03-15 10:00:00}
+          - {transaction_id: t_tol, merchant_id: m1, amount: 100.00, currency: BRL, status: COMPLETED, created_at: 2025-03-15 10:00:00}
+          - {transaction_id: t_mis, merchant_id: m1, amount: 100.00, currency: BRL, status: COMPLETED, created_at: 2025-03-15 10:00:00}
+          - {transaction_id: t_internal_only, merchant_id: m2, amount: 50.00, currency: BRL, status: COMPLETED, created_at: 2025-03-14 09:00:00}
+          - {transaction_id: t_late, merchant_id: m2, amount: 70.00, currency: BRL, status: COMPLETED, created_at: 2025-03-01 09:00:00}
+          - {transaction_id: t_currency, merchant_id: m3, amount: 200.00, currency: USD, status: COMPLETED, created_at: 2025-03-16 08:00:00}
+          - {transaction_id: t_failed_settled, merchant_id: m3, amount: 80.00, currency: BRL, status: FAILED, created_at: 2025-03-15 12:00:00}
+          - {transaction_id: t_pending_quiet, merchant_id: m3, amount: 60.00, currency: BRL, status: PENDING, created_at: 2025-03-15 12:00:00}
+      - input: ref('stg_settlements')
+        rows:
+          - {transaction_id: t_exact, merchant_id: m1, amount: 100.00, currency: BRL, settled_at: 2025-03-16 12:00:00, processor_reference: p1, status: SETTLED, reference_date: 2025-03-16}
+          - {transaction_id: t_tol, merchant_id: m1, amount: 100.01, currency: BRL, settled_at: 2025-03-16 12:00:00, processor_reference: p2, status: SETTLED, reference_date: 2025-03-16}
+          - {transaction_id: t_mis, merchant_id: m1, amount: 100.02, currency: BRL, settled_at: 2025-03-16 12:00:00, processor_reference: p3, status: SETTLED, reference_date: 2025-03-16}
+          - {transaction_id: t_processor_only, merchant_id: m9, amount: 30.00, currency: BRL, settled_at: 2025-03-16 12:00:00, processor_reference: p4, status: SETTLED, reference_date: 2025-03-16}
+          - {transaction_id: t_late, merchant_id: m2, amount: 70.00, currency: BRL, settled_at: 2025-03-16 12:00:00, processor_reference: p5, status: SETTLED, reference_date: 2025-03-16}
+          - {transaction_id: t_currency, merchant_id: m3, amount: 200.00, currency: BRL, settled_at: 2025-03-16 12:00:00, processor_reference: p6, status: SETTLED, reference_date: 2025-03-16}
+          - {transaction_id: t_failed_settled, merchant_id: m3, amount: 80.00, currency: BRL, settled_at: 2025-03-16 12:00:00, processor_reference: p7, status: SETTLED, reference_date: 2025-03-16}
+          - {transaction_id: t_dup, merchant_id: m9, amount: 10.00, currency: BRL, settled_at: 2025-03-16 08:00:00, processor_reference: p8, status: SETTLED, reference_date: 2025-03-16}
+          - {transaction_id: t_dup, merchant_id: m9, amount: 10.00, currency: BRL, settled_at: 2025-03-16 09:00:00, processor_reference: p9, status: SETTLED, reference_date: 2025-03-16}
+          - {transaction_id: t_reversed, merchant_id: m9, amount: 99.00, currency: BRL, settled_at: 2025-03-16 12:00:00, processor_reference: p10, status: REVERSED, reference_date: 2025-03-16}
+    expect:
+      rows:
+        - {transaction_id: t_exact, category: MATCHED, currency_mismatch: false, internal_status_anomaly: false, is_out_of_window: false}
+        - {transaction_id: t_tol, category: MATCHED, currency_mismatch: false, internal_status_anomaly: false, is_out_of_window: false}
+        - {transaction_id: t_mis, category: MISMATCHED, currency_mismatch: false, internal_status_anomaly: false, is_out_of_window: false}
+        - {transaction_id: t_internal_only, category: UNRECONCILED_INTERNAL, currency_mismatch: false, internal_status_anomaly: false, is_out_of_window: false}
+        - {transaction_id: t_processor_only, category: UNRECONCILED_PROCESSOR, currency_mismatch: false, internal_status_anomaly: false, is_out_of_window: false}
+        - {transaction_id: t_late, category: UNRECONCILED_PROCESSOR, currency_mismatch: false, internal_status_anomaly: false, is_out_of_window: true}
+        - {transaction_id: t_currency, category: MISMATCHED, currency_mismatch: true, internal_status_anomaly: false, is_out_of_window: false}
+        - {transaction_id: t_failed_settled, category: MATCHED, currency_mismatch: false, internal_status_anomaly: true, is_out_of_window: false}
+        - {transaction_id: t_dup, category: UNRECONCILED_PROCESSOR, currency_mismatch: false, internal_status_anomaly: false, is_out_of_window: false}

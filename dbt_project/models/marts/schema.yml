@@ -1,0 +1,39 @@
+version: 2
+
+models:
+  - name: dim_merchant
+    columns:
+      - name: merchant_id
+        tests: [unique, not_null]
+
+  - name: mart_operations
+    description: Daily reconciliation health per merchant (Operations).
+    columns:
+      - name: reference_date
+        tests: [not_null]
+      - name: merchant_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_merchant')
+              field: merchant_id
+
+  - name: mart_cfo
+    description: Daily financial volumes per merchant (CFO).
+    columns:
+      - name: reference_date
+        tests: [not_null]
+      - name: merchant_id
+        tests: [not_null]
+
+  - name: mart_compliance
+    description: Transaction-level audit trail (Compliance).
+    columns:
+      - name: reference_date
+        tests: [not_null]
+      - name: transaction_id
+        tests: [not_null]
+      - name: engine_category
+        tests:
+          - accepted_values:
+              values: [MATCHED, MISMATCHED, UNRECONCILED_PROCESSOR, UNRECONCILED_INTERNAL]

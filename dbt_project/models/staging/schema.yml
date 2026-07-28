@@ -1,0 +1,49 @@
+version: 2
+
+models:
+  - name: stg_transactions
+    description: Internal transactions, CDC collapsed to current state.
+    columns:
+      - name: transaction_id
+        tests: [unique, not_null]
+      - name: amount
+        tests: [not_null]
+      - name: status
+        tests:
+          - accepted_values:
+              values: [COMPLETED, PENDING, FAILED]
+
+  - name: stg_settlements
+    description: PaySettler file with normalized amounts.
+    columns:
+      - name: transaction_id
+        tests: [not_null]
+      - name: amount
+        tests: [not_null]
+      - name: status
+        tests:
+          - accepted_values:
+              values: [SETTLED, REVERSED]
+
+  - name: stg_reconciliation_runs
+    columns:
+      - name: run_id
+        tests: [unique, not_null]
+      - name: status
+        tests:
+          - accepted_values:
+              values: [IN_PROGRESS, COMPLETED, FAILED]
+
+  - name: stg_reconciliation_results
+    columns:
+      - name: id
+        tests: [unique, not_null]
+      - name: category
+        tests:
+          - accepted_values:
+              values: [MATCHED, MISMATCHED, UNRECONCILED_PROCESSOR, UNRECONCILED_INTERNAL]
+
+  - name: stg_merchants
+    columns:
+      - name: merchant_id
+        tests: [unique, not_null]

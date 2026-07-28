@@ -8,10 +8,23 @@
 ) }}
 
 with service_results as (
-    select r.transaction_id, r.category as service_category, u.reference_date
-    from {{ ref('stg_reconciliation_results') }} r
-    join {{ ref('stg_reconciliation_runs') }} u on r.run_id = u.run_id
-    where u.is_latest_run
+    -- the service occasionally records the same transaction twice within a
+    -- run (seen in the fixture: ids 388/413, run 5); keep the latest row
+    select transaction_id, service_category, reference_date
+    from (
+        select
+            r.transaction_id,
+            r.category as service_category,
+            u.reference_date,
+            row_number() over (
+                partition by u.reference_date, r.transaction_id
+                order by r.id desc
+            ) as rn
+        from {{ ref('stg_reconciliation_results') }} r
+        join {{ ref('stg_reconciliation_runs') }} u on r.run_id = u.run_id
+        where u.is_latest_run
+    )
+    where rn = 1
 )
 
 select
