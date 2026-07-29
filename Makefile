@@ -1,4 +1,4 @@
-.PHONY: help up down build shell logs run test generate generate-large clean
+.PHONY: help up down build shell logs run docs test generate generate-large clean
 
 REFERENCE_DATE ?= 2025-03-16
 .DEFAULT_GOAL := help
