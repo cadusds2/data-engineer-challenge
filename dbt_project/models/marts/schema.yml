@@ -15,8 +15,9 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('dim_merchant')
-              field: merchant_id
+              arguments:
+                to: ref('dim_merchant')
+                field: merchant_id
 
   - name: mart_cfo
     description: Daily financial volumes per merchant (CFO).
@@ -36,4 +37,5 @@ models:
       - name: engine_category
         tests:
           - accepted_values:
-              values: [MATCHED, MISMATCHED, UNRECONCILED_PROCESSOR, UNRECONCILED_INTERNAL]
+              arguments:
+                values: [MATCHED, MISMATCHED, UNRECONCILED_PROCESSOR, UNRECONCILED_INTERNAL]

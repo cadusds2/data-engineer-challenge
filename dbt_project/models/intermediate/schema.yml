@@ -9,13 +9,15 @@ models:
       - name: category
         tests:
           - accepted_values:
-              values: [MATCHED, MISMATCHED, UNRECONCILED_PROCESSOR, UNRECONCILED_INTERNAL]
+              arguments:
+                values: [MATCHED, MISMATCHED, UNRECONCILED_PROCESSOR, UNRECONCILED_INTERNAL]
   - name: int_reversals
     columns:
       - name: reversal_status
         tests:
           - accepted_values:
-              values: [LINKED, ORPHAN]
+              arguments:
+                values: [LINKED, ORPHAN]
 
 unit_tests:
   - name: engine_categorization_rules

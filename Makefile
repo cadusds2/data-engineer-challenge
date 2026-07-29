@@ -15,6 +15,10 @@ up: ## Build and start the container in the background
 run: ## Run the pipeline for REFERENCE_DATE (default 2025-03-16)
 	$(PIPELINE) python pipeline/pipeline.py --reference-date $(REFERENCE_DATE)
 
+docs: ## Generate and serve dbt docs (lineage + catalog) at http://localhost:8080
+	$(PIPELINE) dbt docs generate --project-dir dbt_project --profiles-dir dbt_project
+	$(PIPELINE) dbt docs serve --project-dir dbt_project --profiles-dir dbt_project --host 0.0.0.0 --port 8080
+
 down: ## Stop and remove the container
 	$(COMPOSE) down
 

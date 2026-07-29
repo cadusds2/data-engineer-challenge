@@ -14,6 +14,8 @@ services:
       - ./pipeline:/app/pipeline
       - ./dbt_project:/app/dbt_project
       - warehouse:/app/warehouse
+    ports:
+      - "8080:8080"
     command: tail -f /dev/null
 
   bi:

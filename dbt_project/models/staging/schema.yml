@@ -11,7 +11,8 @@ models:
       - name: status
         tests:
           - accepted_values:
-              values: [COMPLETED, PENDING, FAILED]
+              arguments:
+                values: [COMPLETED, PENDING, FAILED]
 
   - name: stg_settlements
     description: PaySettler file with normalized amounts.
@@ -23,7 +24,8 @@ models:
       - name: status
         tests:
           - accepted_values:
-              values: [SETTLED, REVERSED]
+              arguments:
+                values: [SETTLED, REVERSED]
 
   - name: stg_reconciliation_runs
     columns:
@@ -32,7 +34,8 @@ models:
       - name: status
         tests:
           - accepted_values:
-              values: [IN_PROGRESS, COMPLETED, FAILED]
+              arguments:
+                values: [IN_PROGRESS, COMPLETED, FAILED]
 
   - name: stg_reconciliation_results
     columns:
@@ -41,7 +44,8 @@ models:
       - name: category
         tests:
           - accepted_values:
-              values: [MATCHED, MISMATCHED, UNRECONCILED_PROCESSOR, UNRECONCILED_INTERNAL]
+              arguments:
+                values: [MATCHED, MISMATCHED, UNRECONCILED_PROCESSOR, UNRECONCILED_INTERNAL]
 
   - name: stg_merchants
     columns:

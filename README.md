@@ -27,6 +27,12 @@ print(c.sql('select * from mart_operations limit 10'))"
 
 Queries de exemplo por persona: [docs/example-queries.sql](docs/example-queries.sql).
 
+Documentação navegável do dbt (lineage + catálogo de colunas):
+
+```bash
+make docs   # http://localhost:8080
+```
+
 BI opcional (Evidence — não é dependência do pipeline):
 
 ```bash
@@ -172,7 +178,47 @@ O que foi simplificado e o que mudaria — detalhado em
 
 ## Ferramentas de IA
 
-Este case foi desenvolvido em par com **Claude Code** (Anthropic): exploração dos dados,
-geração de código SQL/Python sob minha direção, testes e redação da documentação. Todas
-as decisões de arquitetura e modelagem foram tomadas por mim ao longo de sessões
-interativas; o histórico de commits reflete a evolução real do trabalho.
+Usei **Claude Code** (Anthropic) como par de programação, com transparência total: o
+processo importa tanto quanto o resultado, então detalho abaixo como a solução foi
+concebida e qual foi o papel de cada parte.
+
+**Como trabalhei.** Conduzi o desenvolvimento em sessões interativas, no modelo de
+decisões minhas / execução assistida. Antes de qualquer código, usei a IA para explorar
+o enunciado e os dados (schemas, contagens, anomalias) e então **cada decisão
+estrutural foi discutida e definida por mim**, frequentemente contrariando a primeira
+sugestão da ferramenta:
+
+- **Recalcular a reconciliação** em vez de espelhar `reconciliation_results`: a
+  proposta inicial da IA era espelhar; após analisarmos as armadilhas plantadas nos
+  dados (estorno órfão, fora-da-janela), decidi pelo recálculo com cross-check — a
+  decisão central do case.
+- **dbt como motor de transformação**: escolha minha, a partir da minha experiência
+  prévia com a ferramenta; defini também a divisão "dbt transforma, Python orquestra".
+- **Orquestração de produção sem Airflow/Dagster**: questionei a recomendação padrão e
+  defendi Step Functions/Cloud Workflows para um pipeline linear diário — o desenho
+  documentado na Parte 3 reflete essa posição, com o ponto de virada explícito.
+- **Uma tabela por persona** (marts dedicados): direcionamento meu, priorizando a
+  facilidade de consumo; a IA propunha originalmente uma única agregada.
+- **Cortar `dim_date`**: questionei a necessidade e removemos, documentando quando ela
+  voltaria (dias úteis/feriados em liquidação D+1).
+- **Evidence como BI** e **não usar dlt**: avaliei os trade-offs com a IA e decidi
+  incluir o primeiro (BI-as-code, opcional) e deixar o segundo documentado como
+  evolução — em vez de inflar a stack.
+- **Não gerar Terraform não testado**: decidi limitar IaC a um esqueleto ilustrativo e
+  investir em CI real (GitHub Actions), após discussão sobre o risco de entregar
+  infraestrutura nunca aplicada.
+- **Escopo do incremental**: discuti a fundo o full scan do staging e decidi
+  conscientemente *não* implementar ingestão incremental com watermark neste volume,
+  documentando a escada de evolução (particionamento → watermark + MERGE) na Parte 3.
+
+**O que a IA executou sob essa direção**: exploração inicial dos dados, escrita de
+SQL/Python/testes, análise dos PRs públicos concorrentes (usados como benchmark de
+decisões, sem reaproveitamento de código), depuração (o bug de inferência de tipos do
+CSV apareceu num teste de escala que eu pedi) e redação da documentação — **revisada e
+ajustada por mim antes de cada commit** (esta seção inclusive).
+
+**O que fica de aprendizado do processo**: a IA acelera execução e amplia a exploração,
+mas as escolhas que definem a qualidade da entrega — o que construir, o que cortar, o
+que assumir como premissa — continuam sendo trabalho de engenharia humano. O histórico
+de commits reflete essa evolução real, incluindo os erros encontrados e corrigidos no
+caminho.
