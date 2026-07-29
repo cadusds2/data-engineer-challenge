@@ -3,26 +3,180 @@ version: 2
 sources:
   - name: settlement_db
     description: >
-      CDC extracts (DMS-style, columns Op/_timestamp) from the operational
-      PostgreSQL, delivered as parquet files on the local filesystem.
+      Extratos CDC (estilo AWS DMS/Debezium) do PostgreSQL transacional do
+      Settlement Reconciliation Service, entregues como parquet no filesystem
+      local. Cada linha é um EVENTO de mudança (não o estado atual): as colunas
+      Op (I/U/D) e _timestamp permitem reconstruir o estado vivo de cada
+      registro no staging.
     meta:
       external_location: "{{ env_var('DATA_PATH', '/app/docs/sample-data') }}/{name}.parquet"
     tables:
       - name: transactions
-        description: Two CDC batches with schema drift (batch 2 adds payment_method).
+        description: >
+          Transações internas em dois batches com schema drift — o batch 2
+          adiciona payment_method, ausente no batch 1. Lidos com union_by_name
+          para absorver a diferença. 1.060 eventos no fixture colapsam em 995
+          transações vivas após o dedup de CDC.
         meta:
           external_location: "read_parquet('{{ env_var('DATA_PATH', '/app/docs/sample-data') }}/transactions_batch_*.parquet', union_by_name=true)"
+        columns:
+          - name: id
+            description: Chave técnica sequencial do banco transacional.
+          - name: transaction_id
+            description: >
+              UUID da transação — chave de negócio, comum aos dois sistemas
+              (interno e PaySettler); é o campo de match da reconciliação.
+          - name: merchant_id
+            description: >
+              Identificador do merchant (FK lógica para enterprise_company).
+              ATENÇÃO: o gerador planta ~0,01% de linhas com merchant_id nulo.
+          - name: amount
+            description: Valor da transação na moeda em currency.
+          - name: currency
+            description: Moeda ISO 4217 (BRL na quase totalidade).
+          - name: status
+            description: >
+              COMPLETED (esperada liquidar), PENDING (em andamento) ou FAILED
+              (não deve aparecer no arquivo do processador — se aparecer, é
+              anomalia).
+          - name: description
+            description: Descrição livre da transação.
+          - name: created_at
+            description: >
+              Criação da transação — referência para a janela de reconciliação
+              de 7 dias. Chega como texto; tipada no staging.
+          - name: updated_at
+            description: Última atualização no sistema fonte.
+          - name: payment_method
+            description: >
+              Método de pagamento — existe apenas no batch 2 (schema drift);
+              nulo para linhas do batch 1.
+          - name: Op
+            description: Operação CDC — I (insert), U (update), D (delete).
+          - name: _timestamp
+            description: Momento do evento CDC; define a versão mais recente.
+
       - name: reconciliation_runs
+        description: >
+          Metadados de cada execução do processo de reconciliação do serviço
+          operacional. Nove datas do fixture têm mais de uma run
+          (reprocessamentos); o staging marca a autoritativa via is_latest_run.
+        columns:
+          - name: id
+            description: Identificador da run (chave para reconciliation_results.run_id).
+          - name: reference_date
+            description: Data de referência do arquivo processado.
+          - name: file_name
+            description: Nome do arquivo CSV do processador que originou a run.
+          - name: status
+            description: IN_PROGRESS, COMPLETED ou FAILED.
+          - name: total_transactions
+            description: Total de transações avaliadas na run, segundo o serviço.
+          - name: started_at
+            description: Início da execução.
+          - name: completed_at
+            description: Fim da execução (nulo se FAILED/IN_PROGRESS).
+          - name: created_at
+            description: Criação do registro no banco fonte.
+          - name: Op
+            description: Operação CDC — I (insert), U (update), D (delete).
+          - name: _timestamp
+            description: Momento do evento CDC.
+
       - name: reconciliation_results
+        description: >
+          Resultado por transação gravado pelo serviço operacional. NÃO é a
+          fonte primária dos marts — o pipeline recalcula o match e usa esta
+          tabela como cross-check (mart_compliance.service_category). Contém
+          duplicata real no fixture (mesma transação 2x na run 5, ids 388/413),
+          deduplicada no join do cross-check.
+        columns:
+          - name: id
+            description: Chave técnica do resultado.
+          - name: run_id
+            description: Run que produziu o resultado (FK para reconciliation_runs.id).
+          - name: transaction_id
+            description: UUID da transação avaliada.
+          - name: merchant_id
+            description: Merchant da transação.
+          - name: category
+            description: >
+              Categoria atribuída pelo serviço — MATCHED, MISMATCHED,
+              UNRECONCILED_PROCESSOR ou UNRECONCILED_INTERNAL (ver
+              docs/domain-glossary.md).
+          - name: internal_amount
+            description: Valor registrado internamente.
+          - name: processor_amount
+            description: Valor informado pelo processador.
+          - name: difference
+            description: processor_amount - internal_amount, segundo o serviço.
+          - name: created_at
+            description: Criação do registro.
+          - name: Op
+            description: Operação CDC — I (insert), U (update), D (delete).
+          - name: _timestamp
+            description: Momento do evento CDC.
+
       - name: enterprise_company
+        description: >
+          Cadastro de merchants, também em formato CDC: 70 eventos no fixture
+          colapsam em 50 merchants vivos (updates de cadastro geram múltiplas
+          versões — matéria-prima para um futuro SCD2).
+        columns:
+          - name: id
+            description: Chave técnica do cadastro.
+          - name: merchant_id
+            description: Identificador de negócio do merchant.
+          - name: legal_name
+            description: Razão social.
+          - name: trade_name
+            description: Nome fantasia.
+          - name: document
+            description: CNPJ (dado sensível — mascarar em camadas de BI em produção).
+          - name: primary_cnae
+            description: CNAE principal — usado no recorte setorial do CFO.
+          - name: created_at
+            description: Criação do cadastro.
+          - name: updated_at
+            description: Última atualização do cadastro.
+          - name: Op
+            description: Operação CDC — I (insert), U (update), D (delete).
+          - name: _timestamp
+            description: Momento do evento CDC.
 
   - name: paysettler
-    description: Daily settlement file from the external processor.
+    description: >
+      Arquivo diário de liquidação do processador externo PaySettler —
+      a visão "deles" do que foi liquidado.
     tables:
       - name: settlement_file
         description: >
-          Read with all_varchar so schema inference cannot flip column types
-          depending on file contents (amounts arrive both as plain numbers
-          and as 'R$ 1.234,56' strings); typing happens in staging.
+          CSV lido com all_varchar=true: a inferência de schema do DuckDB não
+          pode variar com o conteúdo (amounts chegam tanto como 2616.01 quanto
+          como 'R$ 18.319,17'); toda tipagem acontece no staging. No fixture,
+          as 510 linhas têm settled_at no mesmo dia e valores com diferenças
+          semeadas — é um arquivo sintético que NÃO corresponde ao histórico de
+          reconciliation_results (por isso a correção do motor é provada com
+          unit tests, não com a amostra).
         meta:
           external_location: "read_csv('{{ env_var('DATA_PATH', '/app/docs/sample-data') }}/settlement_paysettler.csv', header=true, all_varchar=true)"
+        columns:
+          - name: transaction_id
+            description: UUID da transação — campo de match com o lado interno.
+          - name: merchant_id
+            description: Merchant segundo o processador.
+          - name: amount
+            description: >
+              Valor liquidado, SUJO: mistura formato numérico simples e
+              formato monetário brasileiro ('R$ 1.234,56'); normalizado em
+              stg_settlements.
+          - name: currency
+            description: Moeda ISO 4217.
+          - name: settled_at
+            description: Timestamp da liquidação (ISO 8601 UTC).
+          - name: processor_reference
+            description: Referência interna do processador (rastreabilidade).
+          - name: status
+            description: >
+              SETTLED (liquidação — entra no match) ou REVERSED (estorno —
+              tratado à parte em int_reversals).

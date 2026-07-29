@@ -2,18 +2,58 @@ version: 2
 
 models:
   - name: int_reconciliation
-    description: Recomputed reconciliation for the reference date.
+    description: >
+      MOTOR DE RECONCILIAÇÃO — recalcula o match do dia a partir das fontes
+      cruas: full outer join por transaction_id entre transações internas
+      (janela de 7 dias, por created_at) e liquidações SETTLED do arquivo
+      (deduplicadas), com tolerância de R$ 0,01. Regras de borda: moeda
+      divergente força MISMATCHED; PENDING/FAILED sem liquidação saem do
+      universo; liquidada com status != COMPLETED vira flag de anomalia.
     columns:
+      - name: reference_date
+        description: Dia reconciliado (particiona os marts incrementais).
       - name: transaction_id
+        description: UUID da transação (único dentro do dia).
         tests: [unique, not_null]
+      - name: merchant_id
+        description: Merchant (coalesce dos dois lados; pode ser nulo).
+      - name: internal_amount
+        description: Valor interno (nulo se só existe no processador).
+      - name: processor_amount
+        description: Valor do processador (nulo se só existe internamente).
+      - name: difference
+        description: processor_amount - internal_amount.
+      - name: internal_status
+        description: Status interno no momento do match.
       - name: category
+        description: Categoria do recálculo (ver docs/domain-glossary.md).
         tests:
           - accepted_values:
               arguments:
                 values: [MATCHED, MISMATCHED, UNRECONCILED_PROCESSOR, UNRECONCILED_INTERNAL]
+      - name: currency_mismatch
+        description: Par com moedas diferentes entre os sistemas.
+      - name: internal_status_anomaly
+        description: Liquidada com status interno != COMPLETED.
+      - name: is_out_of_window
+        description: >
+          Só para UNRECONCILED_PROCESSOR — a transação existe internamente,
+          mas fora da janela de 7 dias (liquidação atrasada).
+
   - name: int_reversals
+    description: >
+      Estornos (REVERSED) do arquivo, excluídos do match principal: LINKED
+      quando a transação estornada existe internamente, ORPHAN quando não —
+      anomalia que só aparece recalculando (armadilha plantada nos dados).
     columns:
+      - name: reference_date
+        description: Dia do arquivo em que o estorno chegou.
+      - name: transaction_id
+        description: UUID da transação estornada.
+      - name: reversed_amount
+        description: Valor do estorno.
       - name: reversal_status
+        description: LINKED (tem par interno) ou ORPHAN (não tem).
         tests:
           - accepted_values:
               arguments:

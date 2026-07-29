@@ -2,40 +2,164 @@ version: 2
 
 models:
   - name: dim_merchant
+    description: >
+      Dimensão de merchants — estado atual (SCD tipo 1) + o membro
+      desconhecido ('UNKNOWN'), que garante que transações com merchant_id
+      nulo não desapareçam das agregações.
     columns:
       - name: merchant_id
+        description: Chave da dimensão ('UNKNOWN' para o membro desconhecido).
         tests: [unique, not_null]
+      - name: legal_name
+        description: Razão social vigente.
+      - name: trade_name
+        description: Nome fantasia vigente.
+      - name: document
+        description: CNPJ (nulo no membro desconhecido).
+      - name: primary_cnae
+        description: CNAE principal.
 
   - name: mart_operations
-    description: Daily reconciliation health per merchant (Operations).
+    description: >
+      OPERAÇÕES — saúde diária da reconciliação. Grão: reference_date x
+      merchant_id, calculado a partir do RECÁLCULO (int_reconciliation).
+      Responde: qual a taxa de match do dia? Quais merchants concentram
+      problemas? Quantas liquidações chegaram fora da janela?
     columns:
       - name: reference_date
+        description: Dia da reconciliação.
         tests: [not_null]
       - name: merchant_id
+        description: Merchant ('UNKNOWN' agrega transações sem merchant).
         tests:
           - not_null
           - relationships:
               arguments:
                 to: ref('dim_merchant')
                 field: merchant_id
+      - name: trade_name
+        description: Nome fantasia (desnormalizado para consumo direto).
+      - name: total_transactions
+        description: Transações avaliadas no match do dia para o merchant.
+      - name: matched_count
+        description: Conciliadas dentro da tolerância de R$ 0,01.
+      - name: mismatched_count
+        description: Presentes nos dois lados com valores divergentes além da tolerância.
+      - name: unreconciled_processor_count
+        description: No arquivo do processador, sem par interno na janela.
+      - name: unreconciled_internal_count
+        description: Internas COMPLETED que não apareceram no arquivo.
+      - name: out_of_window_count
+        description: >
+          Subconjunto de unreconciled_processor cuja transação EXISTE
+          internamente, mas fora da janela de 7 dias — liquidação atrasada,
+          não transação desconhecida.
+      - name: status_anomaly_count
+        description: Liquidadas pelo processador com status interno != COMPLETED.
+      - name: currency_mismatch_count
+        description: Pares com moedas diferentes entre os sistemas.
+      - name: total_mismatch_amount
+        description: Soma dos |difference| das MISMATCHED — o "tamanho do problema" em R$.
+      - name: reversal_count
+        description: Estornos (REVERSED) do dia.
+      - name: orphan_reversal_count
+        description: Estornos sem transação interna correspondente (anomalia grave).
+      - name: reversed_amount
+        description: Valor total estornado.
+      - name: match_rate
+        description: matched_count / total_transactions (0-1); nulo sem transações.
 
   - name: mart_cfo
-    description: Daily financial volumes per merchant (CFO).
+    description: >
+      CFO — volumes financeiros consolidados. Grão: reference_date x
+      merchant_id, com atributos cadastrais para recorte por setor (CNAE).
+      Responde: quanto foi liquidado/estornado/líquido no período? Quanto está
+      em risco ou pendente de liquidação?
     columns:
       - name: reference_date
+        description: Dia da liquidação.
         tests: [not_null]
       - name: merchant_id
+        description: Merchant ('UNKNOWN' para transações sem merchant).
         tests: [not_null]
+      - name: legal_name
+        description: Razão social.
+      - name: trade_name
+        description: Nome fantasia.
+      - name: primary_cnae
+        description: CNAE principal — recorte setorial.
+      - name: settled_count
+        description: Liquidações (SETTLED) do dia.
+      - name: settled_amount
+        description: Valor bruto liquidado segundo o processador.
+      - name: reversed_count
+        description: Estornos do dia.
+      - name: reversed_amount
+        description: Valor estornado.
+      - name: net_settled_amount
+        description: settled_amount - reversed_amount — o número-manchete do CFO.
+      - name: matched_amount
+        description: Valor liquidado conciliado com sucesso.
+      - name: at_risk_amount
+        description: Soma das divergências das MISMATCHED — valor em disputa.
+      - name: unrecognized_settled_amount
+        description: Liquidado pelo processador sem reconhecimento interno na janela.
+      - name: pending_settlement_amount
+        description: Reconhecido internamente, ainda não liquidado pelo processador.
 
   - name: mart_compliance
-    description: Transaction-level audit trail (Compliance).
+    description: >
+      COMPLIANCE — trilha de auditoria no grão transação. Traz o recálculo
+      (engine_category) LADO A LADO com o registro do serviço
+      (service_category) e as flags de anomalia. Responde: o que aconteceu com
+      a transação X? Onde os dois sistemas divergem? Quais anomalias precisam
+      de justificativa?
     columns:
       - name: reference_date
+        description: Dia da reconciliação.
         tests: [not_null]
       - name: transaction_id
+        description: UUID da transação (grão da tabela junto com reference_date).
         tests: [not_null]
+      - name: merchant_id
+        description: Merchant da transação.
+      - name: legal_name
+        description: Razão social (desnormalizada para leitura de auditoria).
+      - name: document
+        description: CNPJ do merchant.
+      - name: internal_amount
+        description: Valor interno (nulo se a transação só existe no processador).
+      - name: processor_amount
+        description: Valor do processador (nulo se só existe internamente).
+      - name: difference
+        description: processor_amount - internal_amount.
+      - name: internal_status
+        description: Status interno da transação no momento do match.
+      - name: internal_created_at
+        description: Criação interna — verificação da janela.
+      - name: settled_at
+        description: Timestamp de liquidação no processador.
+      - name: processor_reference
+        description: Referência do processador (rastreabilidade externa).
       - name: engine_category
+        description: Categoria segundo o NOSSO recálculo (fonte primária dos marts).
         tests:
           - accepted_values:
               arguments:
                 values: [MATCHED, MISMATCHED, UNRECONCILED_PROCESSOR, UNRECONCILED_INTERNAL]
+      - name: service_category
+        description: >
+          Categoria registrada pelo serviço operacional na run autoritativa
+          (nulo quando o serviço não avaliou a transação).
+      - name: categories_diverge
+        description: >
+          Verdadeiro quando engine_category difere de service_category —
+          alimenta o teste de cross-check (warn) e o alerta de produção.
+      - name: currency_mismatch
+        description: Par com moedas diferentes.
+      - name: internal_status_anomaly
+        description: Liquidada pelo processador com status interno != COMPLETED.
+      - name: is_out_of_window
+        description: Transação existe internamente, mas fora da janela de 7 dias.
+      - name: processed_at
+        description: Timestamp de processamento desta linha pelo pipeline.

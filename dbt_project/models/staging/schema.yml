@@ -2,52 +2,128 @@ version: 2
 
 models:
   - name: stg_transactions
-    description: Internal transactions, CDC collapsed to current state.
+    description: >
+      Estado ATUAL das transações internas: eventos CDC colapsados (última
+      versão por transaction_id via _timestamp, deletados descartados), tipos
+      corrigidos, batches unificados apesar do schema drift.
     columns:
       - name: transaction_id
+        description: UUID da transação (chave de negócio, única após o dedup).
         tests: [unique, not_null]
+      - name: merchant_id
+        description: Merchant da transação (nulo em ~0,01% — ver dim_merchant/UNKNOWN).
       - name: amount
+        description: Valor como DECIMAL(15,2) — nunca float, por causa da tolerância de R$ 0,01.
         tests: [not_null]
+      - name: currency
+        description: Moeda ISO 4217, normalizada para maiúsculas.
       - name: status
+        description: Status interno da transação.
         tests:
           - accepted_values:
               arguments:
                 values: [COMPLETED, PENDING, FAILED]
+      - name: payment_method
+        description: Método de pagamento (nulo para linhas do batch 1 — schema drift).
+      - name: created_at
+        description: Criação da transação — base da janela de reconciliação de 7 dias.
+      - name: updated_at
+        description: Última atualização no sistema fonte.
 
   - name: stg_settlements
-    description: PaySettler file with normalized amounts.
+    description: >
+      Arquivo PaySettler com amounts normalizados (formato brasileiro
+      'R$ 1.234,56' e numérico simples convergem para DECIMAL(15,2)) e
+      timestamps tipados. Mantém liquidações E estornos; a separação acontece
+      no motor.
     columns:
       - name: transaction_id
+        description: UUID da transação segundo o processador (pode repetir — dedup no motor).
         tests: [not_null]
+      - name: merchant_id
+        description: Merchant segundo o processador.
       - name: amount
+        description: Valor liquidado/estornado como DECIMAL(15,2), já limpo.
         tests: [not_null]
+      - name: currency
+        description: Moeda ISO 4217, normalizada para maiúsculas.
+      - name: settled_at
+        description: Timestamp da liquidação (UTC).
+      - name: reference_date
+        description: Data de referência derivada de settled_at — chave de partição do pipeline.
+      - name: processor_reference
+        description: Referência interna do processador.
       - name: status
+        description: SETTLED entra no match; REVERSED vai para int_reversals.
         tests:
           - accepted_values:
               arguments:
                 values: [SETTLED, REVERSED]
 
   - name: stg_reconciliation_runs
+    description: >
+      Runs do serviço com CDC colapsado e a flag is_latest_run marcando a run
+      autoritativa de cada reference_date (última COMPLETED) — necessária
+      porque 9 datas do fixture foram reprocessadas.
     columns:
       - name: run_id
+        description: Identificador da run.
         tests: [unique, not_null]
+      - name: reference_date
+        description: Data de referência processada pela run.
+      - name: file_name
+        description: Arquivo CSV que originou a run.
       - name: status
+        description: Situação final da run no serviço.
         tests:
           - accepted_values:
               arguments:
                 values: [IN_PROGRESS, COMPLETED, FAILED]
+      - name: total_transactions
+        description: Total avaliado na run segundo o serviço.
+      - name: is_latest_run
+        description: >
+          Verdadeiro para a run autoritativa da data (última COMPLETED).
+          Operações/CFO consomem só a autoritativa; Compliance enxerga todas.
 
   - name: stg_reconciliation_results
+    description: >
+      Resultados históricos do serviço com CDC colapsado. Fonte do cross-check
+      (não dos marts): comparados ao recálculo em mart_compliance.
     columns:
       - name: id
+        description: Chave técnica do resultado.
         tests: [unique, not_null]
+      - name: run_id
+        description: Run que produziu o resultado.
+      - name: transaction_id
+        description: UUID da transação avaliada.
       - name: category
+        description: Categoria atribuída pelo serviço operacional.
         tests:
           - accepted_values:
               arguments:
                 values: [MATCHED, MISMATCHED, UNRECONCILED_PROCESSOR, UNRECONCILED_INTERNAL]
+      - name: internal_amount
+        description: Valor interno segundo o serviço.
+      - name: processor_amount
+        description: Valor do processador segundo o serviço.
+      - name: difference
+        description: Diferença calculada pelo serviço.
 
   - name: stg_merchants
+    description: >
+      Estado atual do cadastro de merchants (CDC colapsado, SCD tipo 1 — o
+      histórico de versões existe na fonte e habilitaria SCD2 futuramente).
     columns:
       - name: merchant_id
+        description: Identificador de negócio do merchant.
         tests: [unique, not_null]
+      - name: legal_name
+        description: Razão social vigente.
+      - name: trade_name
+        description: Nome fantasia vigente.
+      - name: document
+        description: CNPJ (mascarar em BI de produção).
+      - name: primary_cnae
+        description: CNAE principal para recorte setorial.
